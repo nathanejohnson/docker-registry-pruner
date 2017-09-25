@@ -4,7 +4,7 @@ Docker registry pruner
 This is a tool for batch deleting manifests from a private Docker registry.
 
 `docker-registry-pruner` [deletes through the registry HTTP API](https://docs.docker.com/registry/spec/api/#deleting-an-image)
-so it does not actually remove images from the registry storage, is just removes the manifest and tags. If you then want
+so it does not actually remove images from the registry storage, it just removes the manifest and tags. If you then want
 to free up some space, [run the registry garbage collector](https://docs.docker.com/registry/garbage-collection/#run-garbage-collection)
 which will remove dangling layers from storage.
 
