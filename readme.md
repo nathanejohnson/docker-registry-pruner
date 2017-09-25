@@ -11,15 +11,17 @@ which will remove dangling layers from storage.
 Configure and run it
 --------------------
 
-`docker-registry-pruner` accepts parameters as flags (eg `./docker-registry-pruner -minage 24h`) and as environment
-variables with the prefix `DOCKER_REGISTRY_PRUNER_` (eg. `DOCKER_REGISTRY_PRUNER_MINAGE=24h ./docker-registry-pruner`).
+`docker-registry-pruner` accepts parameters as flags (eg `docker run cego/docker-registry-pruner -minage 24h`) and as environment
+variables with the prefix `DOCKER_REGISTRY_PRUNER_` (eg. `docker run -e DOCKER_REGISTRY_PRUNER_MINAGE=24h cego/docker-registry-pruner`).
 
-To get a description of the available flags, run `./docker-registry-pruner -h`.
+To get a description of the available flags, run `docker run cego/docker-registry-pruner -h`.
 
 Building
 --------
 
-`docker-registry-pruner` is written in Go and can be build with the usual `go get . && go build .` from within your `$GOPATH`.
+To build the docker image just do the usual `docker build .`.
+
+`docker-registry-pruner` is written in Go and the binary can be build with the usual `go get . && go build .` from within your `$GOPATH`.
 If you'd rather not set up a Go build environment on your machine, you can also built it using the golang docker image, like so:
 
     docker run --rm \
