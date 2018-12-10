@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -41,23 +42,34 @@ func (a *API) SetCredentials(user string, pass string) {
 
 // GetRepositories returns all repository names of the registry.
 func (a *API) GetRepositories() ([]string, error) {
-	resp, err := a.doRequest("GET", "/v2/_catalog", manifestV2)
-	if err != nil {
-		return nil, err
+	var repositories []string
+
+	path := "/v2/_catalog"
+	for path != "" {
+		resp, err := a.doRequest("GET", path, manifestV2)
+		if err != nil {
+			return nil, err
+		}
+
+		var catalog struct {
+			Repositories []string `json:"repositories"`
+		}
+
+		err = json.NewDecoder(resp.Body).Decode(&catalog)
+		if err != nil {
+			return nil, err
+		}
+
+		repositories = append(repositories, catalog.Repositories...)
+		path = a.nextPagePath(resp)
+
+		err = resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	defer resp.Body.Close()
-
-	var catalog struct {
-		Repositories []string `json:"repositories"`
-	}
-
-	err = json.NewDecoder(resp.Body).Decode(&catalog)
-	if err != nil {
-		return nil, err
-	}
-
-	return catalog.Repositories, nil
+	return repositories, nil
 }
 
 // GetTagsIndexedByDigest returns a "digest => tag slice" map containing all tags of the given repository.
@@ -194,4 +206,16 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 	}
 
 	return resp, nil
+}
+
+func (a *API) nextPagePath(resp *http.Response) string {
+	link := resp.Header.Get("Link")
+	if link == "" {
+		return ""
+	}
+
+	begin := strings.Index(link, "<") + 1
+	end := strings.LastIndex(link, ">")
+
+	return link[begin:end]
 }
