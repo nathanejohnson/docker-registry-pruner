@@ -217,7 +217,5 @@ func (a *API) nextPagePath(resp *http.Response) string {
 	begin := strings.Index(link, "<") + 1
 	end := strings.LastIndex(link, ">")
 
-	fmt.Printf("Next link: [%s] [%d:%d]\n", link, begin, end)
-
 	return link[begin:end]
 }
