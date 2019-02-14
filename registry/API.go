@@ -14,7 +14,7 @@ type API struct {
 	host     string
 	headers  map[string]string
 	client   http.Client
-	pageSize int
+	PageSize int
 }
 
 type manifestVersion uint
