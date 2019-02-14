@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type API struct {
-	host    string
-	headers map[string]string
-	client  http.Client
+	host     string
+	headers  map[string]string
+	client   http.Client
+	pageSize int
 }
 
 type manifestVersion uint
@@ -33,6 +35,10 @@ func NewAPI(host string) *API {
 		client:  http.Client{},
 		headers: map[string]string{},
 	}
+}
+
+func (a *API) SetClient(client *http.Client) {
+	a.client = *client
 }
 
 // SetCredentials sets basic auth credentials used for communication with the registry HTTP API.
@@ -184,6 +190,10 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 	req, err := http.NewRequest(method, a.host+path, nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if a.pageSize > 0 {
+		req.URL.Query().Set("n", strconv.Itoa(a.pageSize))
 	}
 
 	contentType, found := manifestContentType[version]
