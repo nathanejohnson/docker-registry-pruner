@@ -192,8 +192,8 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 		return nil, err
 	}
 
-	if a.pageSize > 0 {
-		req.URL.Query().Set("n", strconv.Itoa(a.pageSize))
+	if a.PageSize > 0 {
+		req.URL.Query().Set("n", strconv.Itoa(a.PageSize))
 	}
 
 	contentType, found := manifestContentType[version]
