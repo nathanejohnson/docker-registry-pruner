@@ -5,14 +5,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
 
 type API struct {
-	host    string
-	headers map[string]string
-	client  http.Client
+	host     string
+	headers  map[string]string
+	client   http.Client
+	pageSize int
 }
 
 type manifestVersion uint
@@ -33,6 +35,14 @@ func NewAPI(host string) *API {
 		client:  http.Client{},
 		headers: map[string]string{},
 	}
+}
+
+func (a *API) SetClient(client *http.Client) {
+	a.client = *client
+}
+
+func (a *API) SetPageSize(size int) {
+	a.pageSize = size
 }
 
 // SetCredentials sets basic auth credentials used for communication with the registry HTTP API.
@@ -120,9 +130,14 @@ func (a *API) GetTags(repository string) ([]string, error) {
 
 // GetManifestCreated returns the creation time of the manifest referenced by the given tag in the given repository.
 func (a *API) GetManifestCreated(repository string, tag string) (time.Time, error) {
+	_, t, err := a.GetManifestDigestAndCreated(repository, tag)
+	return t, err
+}
+
+func (a *API) GetManifestDigestAndCreated(repository string, tag string) (string, time.Time, error) {
 	resp, err := a.doRequest("GET", "/v2/"+repository+"/manifests/"+tag, manifestV1)
 	if err != nil {
-		return time.Time{}, err
+		return "", time.Time{}, err
 	}
 
 	defer resp.Body.Close()
@@ -139,7 +154,7 @@ func (a *API) GetManifestCreated(repository string, tag string) (time.Time, erro
 
 	err = json.NewDecoder(resp.Body).Decode(&manifest)
 	if err != nil {
-		return time.Time{}, err
+		return "", time.Time{}, err
 	}
 
 	// ... now we can get the timestamp from the first (thus newest) json-encoded history record we just extracted.
@@ -150,10 +165,12 @@ func (a *API) GetManifestCreated(repository string, tag string) (time.Time, erro
 
 	err = json.Unmarshal([]byte(manifest.History[0].V1Compatibility), &historyItem)
 	if err != nil {
-		return time.Time{}, err
+		return "", time.Time{}, err
 	}
 
-	return historyItem.Created, nil
+	digest := resp.Header.Get("Docker-Content-Digest")
+
+	return digest, historyItem.Created, nil
 }
 
 // GetDigest returns the digest of the given tag in the given repository.
@@ -186,6 +203,12 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 		return nil, err
 	}
 
+	if a.pageSize > 0 {
+		q := req.URL.Query()
+		q.Set("n", strconv.Itoa(a.pageSize))
+		req.URL.RawQuery = q.Encode()
+	}
+
 	contentType, found := manifestContentType[version]
 	if !found {
 		panic(fmt.Sprintf("Invalid manifestVersion '%d'.", version))
@@ -204,7 +227,6 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("Got non-success HTTP status %d when sending %s %s.", resp.StatusCode, req.Method, req.URL.Path)
 	}
-
 	return resp, nil
 }
 
