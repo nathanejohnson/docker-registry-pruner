@@ -37,10 +37,12 @@ func NewAPI(host string) *API {
 	}
 }
 
+// SetClient changes the http.Client used for http requests.
 func (a *API) SetClient(client *http.Client) {
 	a.client = *client
 }
 
+// SetPageSize overrides the default page size used by the API.
 func (a *API) SetPageSize(size int) {
 	a.pageSize = size
 }
@@ -134,6 +136,7 @@ func (a *API) GetManifestCreated(repository string, tag string) (time.Time, erro
 	return t, err
 }
 
+// GetManifestDigestAndCreated returns the digest and creation time.
 func (a *API) GetManifestDigestAndCreated(repository string, tag string) (string, time.Time, error) {
 	resp, err := a.doRequest("GET", "/v2/"+repository+"/manifests/"+tag, manifestV1)
 	if err != nil {
