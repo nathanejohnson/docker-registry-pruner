@@ -37,8 +37,8 @@ func NewAPI(host string) *API {
 	}
 }
 
-// SetClient changes the http.Client used for http requests.
-func (a *API) SetClient(client *http.Client) {
+// SetHTTPClient changes the http.Client used for http requests.
+func (a *API) SetHTTPClient(client *http.Client) {
 	a.client = *client
 }
 
