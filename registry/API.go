@@ -1,23 +1,29 @@
 package registry
 
 import (
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type API struct {
-	host     string
-	headers  map[string]string
-	client   http.Client
-	pageSize int
+	host        string
+	user        string
+	bearerToken string
+	pass        string
+	client      http.Client
+	pageSize    int
 }
 
 type manifestVersion uint
+
+const wwwAuthenticateHeader = "Www-Authenticate"
 
 const (
 	manifestV1 manifestVersion = 1
@@ -31,9 +37,8 @@ var manifestContentType = map[manifestVersion]string{
 
 func NewAPI(host string) *API {
 	return &API{
-		host:    host,
-		client:  http.Client{},
-		headers: map[string]string{},
+		host:   host,
+		client: http.Client{},
 	}
 }
 
@@ -49,7 +54,8 @@ func (a *API) SetPageSize(size int) {
 
 // SetCredentials sets basic auth credentials used for communication with the registry HTTP API.
 func (a *API) SetCredentials(user string, pass string) {
-	a.headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString([]byte(user+":"+pass))
+	a.user = user
+	a.pass = pass
 }
 
 // GetRepositories returns all repository names of the registry.
@@ -58,7 +64,7 @@ func (a *API) GetRepositories() ([]string, error) {
 
 	path := "/v2/_catalog"
 	for path != "" {
-		resp, err := a.doRequest("GET", path, manifestV2)
+		resp, err := a.request("GET", path, manifestV2)
 		if err != nil {
 			return nil, err
 		}
@@ -111,7 +117,7 @@ func (a *API) GetTagsIndexedByDigest(repository string) (map[string][]string, er
 
 // GetTags returns all tags of the given repository.
 func (a *API) GetTags(repository string) ([]string, error) {
-	resp, err := a.doRequest("GET", "/v2/"+repository+"/tags/list", manifestV2)
+	resp, err := a.request("GET", "/v2/"+repository+"/tags/list", manifestV2)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +144,7 @@ func (a *API) GetManifestCreated(repository string, tag string) (time.Time, erro
 
 // GetManifestDigestAndCreated returns the digest and creation time.
 func (a *API) GetManifestDigestAndCreated(repository string, tag string) (string, time.Time, error) {
-	resp, err := a.doRequest("GET", "/v2/"+repository+"/manifests/"+tag, manifestV1)
+	resp, err := a.request("GET", "/v2/"+repository+"/manifests/"+tag, manifestV1)
 	if err != nil {
 		return "", time.Time{}, err
 	}
@@ -178,7 +184,7 @@ func (a *API) GetManifestDigestAndCreated(repository string, tag string) (string
 
 // GetDigest returns the digest of the given tag in the given repository.
 func (a *API) GetDigest(repository string, tag string) (string, error) {
-	resp, err := a.doRequest("HEAD", "/v2/"+repository+"/manifests/"+tag, manifestV2)
+	resp, err := a.request("HEAD", "/v2/"+repository+"/manifests/"+tag, manifestV2)
 	if err != nil {
 		return "", err
 	}
@@ -190,7 +196,7 @@ func (a *API) GetDigest(repository string, tag string) (string, error) {
 
 // DeleteManifest deletes the given digest from the given repository.
 func (a *API) DeleteManifest(repository string, digest string) error {
-	resp, err := a.doRequest("DELETE", "/v2/"+repository+"/manifests/"+digest, manifestV2)
+	resp, err := a.request("DELETE", "/v2/"+repository+"/manifests/"+digest, manifestV2)
 	if err != nil {
 		return err
 	}
@@ -200,7 +206,41 @@ func (a *API) DeleteManifest(repository string, digest string) error {
 	return nil
 }
 
-func (a *API) doRequest(method string, path string, version manifestVersion) (*http.Response, error) {
+func (a *API) request(method string, path string, version manifestVersion) (*http.Response, error) {
+	var resp *http.Response
+	var err error
+
+	resp, err = a.registryRequest(method, path, version)
+	if err != nil {
+		return resp, err
+	}
+
+	if resp.StatusCode < 300 {
+		return resp, nil
+	}
+
+	if resp.StatusCode == 401 && resp.Header.Get(wwwAuthenticateHeader) != "" {
+		token, err := a.fetchBearerToken(resp)
+		if err != nil {
+			return resp, err
+		}
+
+		a.bearerToken = token
+
+		resp, err = a.registryRequest(method, path, version)
+		if err != nil {
+			return resp, err
+		}
+	}
+
+	if resp.StatusCode >= 300 {
+		return resp, fmt.Errorf("Got non-success HTTP status %d when sending %s %s.", resp.StatusCode, method, path)
+	}
+
+	return resp, nil
+}
+
+func (a *API) registryRequest(method string, path string, version manifestVersion) (*http.Response, error) {
 	req, err := http.NewRequest(method, a.host+path, nil)
 	if err != nil {
 		return nil, err
@@ -218,8 +258,12 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 	}
 
 	req.Header.Add("Accept", contentType)
-	for key, value := range a.headers {
-		req.Header.Add(key, value)
+
+	if a.user != "" {
+		req.SetBasicAuth(a.user, a.pass)
+	}
+	if a.bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+a.bearerToken)
 	}
 
 	resp, err := a.client.Do(req)
@@ -227,10 +271,43 @@ func (a *API) doRequest(method string, path string, version manifestVersion) (*h
 		return nil, err
 	}
 
-	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Got non-success HTTP status %d when sending %s %s.", resp.StatusCode, req.Method, req.URL.Path)
-	}
 	return resp, nil
+}
+
+func (a *API) fetchBearerToken(deniedResponse *http.Response) (string, error) {
+
+	u, err := tokenRequestURLFromResponse(deniedResponse)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("GET", u, nil)
+	if err != nil {
+		return "", err
+	}
+
+	if a.user != "" {
+		req.SetBasicAuth(a.user, a.pass)
+	}
+
+	out, _ := httputil.DumpRequestOut(req, false)
+	fmt.Printf("%s\n", out)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		return "", fmt.Errorf("unexpected response code %d from token service", resp.StatusCode)
+	}
+
+	var t struct {
+		Token string `json:"token"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&t)
+	return t.Token, err
 }
 
 func (a *API) nextPagePath(resp *http.Response) string {
@@ -243,4 +320,42 @@ func (a *API) nextPagePath(resp *http.Response) string {
 	end := strings.LastIndex(link, ">")
 
 	return link[begin:end]
+}
+
+func tokenRequestURLFromResponse(deniedResponse *http.Response) (string, error) {
+	header := deniedResponse.Header.Get(wwwAuthenticateHeader)
+	if header[:7] != "Bearer " {
+		return "", fmt.Errorf(`%s response header refers to unsupported authentication scheme`, wwwAuthenticateHeader)
+	}
+
+	instructions := extractKeyValuePairs(header)
+	realm, present := instructions["realm"]
+	if !present {
+		return "", fmt.Errorf(`no realm found in %s response header`, wwwAuthenticateHeader)
+	}
+	service, present := instructions["service"]
+	if !present {
+		return "", fmt.Errorf(`no service found in %s response header`, wwwAuthenticateHeader)
+	}
+	scope, present := instructions["scope"]
+	if !present {
+		return "", fmt.Errorf(`no scope found in %s response header`, wwwAuthenticateHeader)
+	}
+
+	params := url.Values{}
+	params.Set("service", service)
+	params.Set("scope", scope)
+
+	return fmt.Sprintf("%s?%s", realm, params.Encode()), nil
+}
+
+func extractKeyValuePairs(header string) map[string]string {
+	re := regexp.MustCompile(`(\w+)=\"([^\"]*)\"`)
+	ms := re.FindAllSubmatch([]byte(header), -1)
+	result := make(map[string]string, len(ms))
+
+	for _, m := range ms {
+		result[string(m[1])] = string(m[2])
+	}
+	return result
 }
