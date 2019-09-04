@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -289,9 +288,6 @@ func (a *API) fetchBearerToken(deniedResponse *http.Response) (string, error) {
 	if a.user != "" {
 		req.SetBasicAuth(a.user, a.pass)
 	}
-
-	out, _ := httputil.DumpRequestOut(req, false)
-	fmt.Printf("%s\n", out)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
